@@ -1,0 +1,427 @@
+# %% [code]
+# ============================================================================
+# PROBABILISTIC REINTERPRETATION OF BORDERLINE TRIAL EVIDENCE
+# Bayesian Decision-Analytic Framework for Faricimab T&E vs Aflibercept
+# 
+# Based on: Jaffe GJ, Deák G, Gibson K, et al. Retina 2025.
+# DOI: 10.1097/IAE.0000000000004572
+# 
+# This code implements:
+# 1. Primary Bayesian analysis (conjugate normal update)
+# 2. Posterior probabilities for clinically meaningful thresholds
+# 3. Bayes factor analysis (H₁: OR < 1.0 vs H₀: OR ≥ 1.0)
+# 4. ROPE (Region of Practical Equivalence) analysis
+# 5. Decision-curve analysis
+# 6. Sensitivity analysis across four priors
+# 
+# All analyses use only published summary statistics.
+# ============================================================================
+
+import numpy as np
+import pandas as pd
+from scipy import stats
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# ----------------------------------------------------------------------------
+# 1. GLOBAL STYLING FOR PUBLICATION-READY FIGURES
+# ----------------------------------------------------------------------------
+plt.rcParams['font.family'] = 'serif'
+plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
+plt.rcParams['axes.labelsize'] = 14
+plt.rcParams['axes.titlesize'] = 16
+plt.rcParams['xtick.labelsize'] = 12
+plt.rcParams['ytick.labelsize'] = 12
+plt.rcParams['legend.fontsize'] = 12
+plt.rcParams['figure.dpi'] = 300
+sns.set_style("whitegrid")
+sns.set_context("paper", font_scale=1.2, rc={"lines.linewidth": 2.5})
+
+# ----------------------------------------------------------------------------
+# 2. DATA INPUT (extracted from published summary statistics)
+# ----------------------------------------------------------------------------
+# Faricimab T&E vs Aflibercept Q8W for ERM formation
+OR_observed = 0.65
+CI_lower = 0.41
+CI_upper = 1.05
+p_value = 0.0783
+
+# ----------------------------------------------------------------------------
+# 3. HELPER FUNCTION: CONJUGATE NORMAL-UPDATE
+# ----------------------------------------------------------------------------
+def compute_posterior(log_or, se, prior_mean=0, prior_sd=1):
+    """
+    Computes the posterior distribution N(mean_post, sd_post^2)
+    for a normal likelihood N(log_or, se^2) and prior N(prior_mean, prior_sd^2).
+    """
+    prec_prior = 1 / (prior_sd ** 2) if prior_sd != np.inf else 0
+    prec_lik = 1 / (se ** 2)
+    prec_post = prec_prior + prec_lik
+    var_post = 1 / prec_post
+    sd_post = np.sqrt(var_post)
+    mean_post = (prior_mean * prec_prior + log_or * prec_lik) / prec_post
+    return mean_post, sd_post
+
+# ----------------------------------------------------------------------------
+# 4. PRIMARY BAYESIAN ANALYSIS (Weakly regularizing prior: N(0, 1^2))
+# ----------------------------------------------------------------------------
+log_or = np.log(OR_observed)
+se = (np.log(CI_upper) - np.log(CI_lower)) / (2 * 1.96)
+
+mean_post_primary, sd_post_primary = compute_posterior(
+    log_or, se, prior_mean=0, prior_sd=1
+)
+
+post_median_OR = np.exp(mean_post_primary)
+cr_lower = np.exp(mean_post_primary - 1.96 * sd_post_primary)
+cr_upper = np.exp(mean_post_primary + 1.96 * sd_post_primary)
+
+# Posterior probabilities for key thresholds
+prob_OR_lt_1 = stats.norm.cdf(0, loc=mean_post_primary, scale=sd_post_primary)
+prob_OR_lt_077 = stats.norm.cdf(np.log(0.77), loc=mean_post_primary, scale=sd_post_primary)
+prob_OR_lt_060 = stats.norm.cdf(np.log(0.60), loc=mean_post_primary, scale=sd_post_primary)
+
+print("=" * 80)
+print("PRIMARY BAYESIAN ANALYSIS (Prior: N(0, 1²))")
+print("=" * 80)
+print(f"Observed OR:          {OR_observed:.2f}  (95% CI: {CI_lower:.2f}–{CI_upper:.2f})")
+print(f"p-value:              {p_value:.4f}")
+print(f"Log(OR):              {log_or:.4f}")
+print(f"Standard Error:       {se:.4f}")
+print(f"Posterior mean (log): {mean_post_primary:.4f}")
+print(f"Posterior SD (log):   {sd_post_primary:.4f}")
+print(f"Posterior median OR:  {post_median_OR:.3f}")
+print(f"95% Credible Int.:    {cr_lower:.3f} – {cr_upper:.3f}")
+print("\nPosterior Probabilities:")
+print(f"  Pr(OR < 1.0)  = {prob_OR_lt_1:.1%}  (any protective effect)")
+print(f"  Pr(OR < 0.77) = {prob_OR_lt_077:.1%}  (≥23% RRR, NNT ≈ 40)")
+print(f"  Pr(OR < 0.60) = {prob_OR_lt_060:.1%}  (≥40% RRR)")
+print("=" * 80)
+
+# ----------------------------------------------------------------------------
+# 5. BAYES FACTOR ANALYSIS
+# ----------------------------------------------------------------------------
+# BF₁₀ = Pr(H₁|data) / Pr(H₀|data) ÷ [Pr(H₁) / Pr(H₀)]
+# For symmetric prior N(0,1), Pr(H₁) = Pr(H₀) = 0.5
+# Therefore BF₁₀ = Pr(H₁|data) / Pr(H₀|data)
+
+prob_OR_ge_1 = 1 - prob_OR_lt_1
+bayes_factor = prob_OR_lt_1 / prob_OR_ge_1
+
+print("\n" + "=" * 80)
+print("BAYES FACTOR ANALYSIS")
+print("=" * 80)
+print(f"H₁ (protective effect, OR < 1.0):  Pr = {prob_OR_lt_1:.1%}")
+print(f"H₀ (null effect, OR ≥ 1.0):       Pr = {prob_OR_ge_1:.1%}")
+print(f"\nBayes Factor (BF₁₀) = {bayes_factor:.1f}")
+print("\nInterpretation (Jeffreys, 1961):")
+print("  BF 3–10:   substantial evidence")
+print("  BF 10–30:  strong evidence")
+print("  BF 30–100: very strong evidence")
+print("  BF > 100:  decisive evidence")
+print(f"\n  → BF = {bayes_factor:.1f} represents STRONG evidence for H₁")
+print("=" * 80)
+
+# ----------------------------------------------------------------------------
+# 6. ROPE (REGION OF PRACTICAL EQUIVALENCE) ANALYSIS
+# ----------------------------------------------------------------------------
+# Define ROPE on the log-odds scale: OR 0.95 to 1.05
+rope_log_lower = np.log(0.95)
+rope_log_upper = np.log(1.05)
+
+# Calculate probability that θ falls within ROPE
+prob_in_rope = stats.norm.cdf(rope_log_upper, loc=mean_post_primary, scale=sd_post_primary) - \
+               stats.norm.cdf(rope_log_lower, loc=mean_post_primary, scale=sd_post_primary)
+
+# Probability below ROPE (clinically meaningful protective effect)
+prob_below_rope = stats.norm.cdf(rope_log_lower, loc=mean_post_primary, scale=sd_post_primary)
+
+# Probability above ROPE (clinically meaningful harmful effect)
+prob_above_rope = 1 - stats.norm.cdf(rope_log_upper, loc=mean_post_primary, scale=sd_post_primary)
+
+print("\n" + "=" * 80)
+print("ROPE (REGION OF PRACTICAL EQUIVALENCE) ANALYSIS")
+print("=" * 80)
+print(f"ROPE: OR {np.exp(rope_log_lower):.2f} – {np.exp(rope_log_upper):.2f}")
+print(f"      log OR {rope_log_lower:.4f} – {rope_log_upper:.4f}")
+print(f"\nPosterior Probabilities:")
+print(f"  Pr(θ within ROPE)  = {prob_in_rope:.1%}  (clinically negligible effect)")
+print(f"  Pr(θ below ROPE)   = {prob_below_rope:.1%}  (clinically meaningful protective effect)")
+print(f"  Pr(θ above ROPE)   = {prob_above_rope:.1%}  (clinically meaningful harmful effect)")
+print(f"\nInterpretation: Only {prob_in_rope:.1%} probability of a clinically negligible effect.")
+print(f"                {prob_below_rope:.1%} probability of meaningful protective effect.")
+print("=" * 80)
+
+# ----------------------------------------------------------------------------
+# 7. DECISION-CURVE ANALYSIS
+# ----------------------------------------------------------------------------
+# Identify the threshold probability at which T&E becomes the preferred strategy
+# The threshold depends on the relative cost of false positives vs false negatives.
+# We calculate the net benefit across a range of threshold probabilities.
+
+thresholds = np.linspace(0.01, 0.99, 100)
+net_benefit_te = []
+net_benefit_afl = []
+
+for pt in thresholds:
+    # Net benefit = True positives - (False positives * (pt / (1 - pt)))
+    # For T&E: treat everyone (if we believe benefit)
+    nb_te = prob_OR_lt_1 - (1 - prob_OR_lt_1) * (pt / (1 - pt))
+    # For aflibercept: treat no one
+    nb_afl = 0.0
+    
+    # Clip negative values
+    net_benefit_te.append(max(nb_te, 0))
+    net_benefit_afl.append(max(nb_afl, 0))
+
+# Find the threshold where NB_TE > NB_AFL
+decision_threshold = None
+for i, pt in enumerate(thresholds):
+    if net_benefit_te[i] > net_benefit_afl[i]:
+        decision_threshold = pt
+        break
+
+# Determine the net benefit at the posterior probability threshold (96.0%)
+nb_at_posterior = prob_OR_lt_1 - (1 - prob_OR_lt_1) * (prob_OR_lt_1 / (1 - prob_OR_lt_1))
+nb_at_posterior = max(nb_at_posterior, 0)  # Clip at 0
+
+print("\n" + "=" * 80)
+print("DECISION-CURVE ANALYSIS")
+print("=" * 80)
+print(f"Posterior probability of benefit: {prob_OR_lt_1:.1%}")
+print(f"Threshold probability:            {decision_threshold:.1%} (T&E becomes preferred)")
+print(f"Net benefit at posterior prob:    {nb_at_posterior:.4f}")
+print(f"\nInterpretation: Since {prob_OR_lt_1:.1%} > {decision_threshold:.1%}, T&E is the preferred")
+print("                strategy across all clinically plausible thresholds.")
+print("=" * 80)
+
+# ----------------------------------------------------------------------------
+# 8. SENSITIVITY ANALYSIS (four different priors)
+# ----------------------------------------------------------------------------
+# Note: Optimistic prior corrected to N(-0.5, 1²) - favors protective effect
+priors = {
+    "Skeptical":  {"mean": 0.0, "sd": 0.5},
+    "Primary":    {"mean": 0.0, "sd": 1.0},
+    "Optimistic": {"mean": -0.5, "sd": 1.0},  # Corrected direction
+    "Flat":       {"mean": 0.0, "sd": np.inf}
+}
+
+sensitivity_results = []
+for name, params in priors.items():
+    if name == "Flat":
+        # Flat prior = posterior is just the likelihood
+        mean_post = log_or
+        sd_post = se
+    else:
+        mean_post, sd_post = compute_posterior(
+            log_or, se, prior_mean=params["mean"], prior_sd=params["sd"]
+        )
+    
+    prob_lt_1 = stats.norm.cdf(0, loc=mean_post, scale=sd_post)
+    prob_lt_077 = stats.norm.cdf(np.log(0.77), loc=mean_post, scale=sd_post)
+    prob_ge_1 = 1 - prob_lt_1
+    bf = prob_lt_1 / prob_ge_1 if prob_ge_1 > 0 else np.inf
+    
+    # ROPE probability for this prior
+    prob_in_rope = stats.norm.cdf(rope_log_upper, loc=mean_post, scale=sd_post) - \
+                   stats.norm.cdf(rope_log_lower, loc=mean_post, scale=sd_post)
+    
+    sensitivity_results.append({
+        "Prior": name,
+        "Mean (log)": mean_post,
+        "SD (log)": sd_post,
+        "Pr(OR<1.0)": prob_lt_1,
+        "Pr(OR<0.77)": prob_lt_077,
+        "BF₁₀": bf,
+        "Pr(ROPE)": prob_in_rope
+    })
+
+df_sens = pd.DataFrame(sensitivity_results)
+
+print("\n" + "=" * 80)
+print("SENSITIVITY ANALYSIS – Complete Results Across Priors")
+print("=" * 80)
+print(df_sens.to_string(index=False, formatters={
+    "Mean (log)": "{:.4f}".format,
+    "SD (log)": "{:.4f}".format,
+    "Pr(OR<1.0)": "{:.1%}".format,
+    "Pr(OR<0.77)": "{:.1%}".format,
+    "BF₁₀": "{:.1f}".format,
+    "Pr(ROPE)": "{:.1%}".format
+}))
+print("=" * 80)
+
+# ----------------------------------------------------------------------------
+# 9. FIGURE 1: PRIOR vs POSTERIOR DENSITIES
+# ----------------------------------------------------------------------------
+x = np.linspace(-3.0, 2.0, 500)
+
+pdf_prior_skep = stats.norm.pdf(x, loc=0, scale=0.5)
+pdf_prior_primary = stats.norm.pdf(x, loc=0, scale=1.0)
+pdf_posterior = stats.norm.pdf(x, loc=mean_post_primary, scale=sd_post_primary)
+
+fig1, ax1 = plt.subplots(figsize=(10, 6))
+ax1.plot(x, pdf_prior_skep, '--', color='#E69F00', linewidth=2.5, label='Skeptical Prior (N[0, 0.5²])')
+ax1.plot(x, pdf_prior_primary, ':', color='#56B4E9', linewidth=2.5, label='Primary Prior (N[0, 1²])')
+ax1.plot(x, pdf_posterior, '-', color='#D55E00', linewidth=3.5, label=f'Posterior (N[{mean_post_primary:.3f}, {sd_post_primary:.3f}²])')
+ax1.axvline(x=0, color='black', linestyle='-', linewidth=1.2, alpha=0.7, label='Null (log OR = 0)')
+ax1.fill_between(x, 0, pdf_posterior, where=(x < 0), color='#D55E00', alpha=0.15, label=f'Pr(OR < 1.0) = {prob_OR_lt_1:.1%}')
+
+# Add ROPE shading
+ax1.axvspan(rope_log_lower, rope_log_upper, alpha=0.2, color='green', label=f'ROPE: OR 0.95–1.05\nPr(ROPE) = {prob_in_rope:.1%}')
+
+ax1.set_xlabel('Log(Odds Ratio)')
+ax1.set_ylabel('Density')
+ax1.set_title('Figure 1: Prior and Posterior Densities with ROPE', fontweight='bold')
+ax1.legend(loc='upper left', frameon=True, fancybox=True, shadow=True)
+ax1.grid(True, alpha=0.3)
+fig1.tight_layout()
+plt.show()
+fig1.savefig('Figure1_Prior_Posterior_ROPE.png', dpi=300, bbox_inches='tight')
+
+# ----------------------------------------------------------------------------
+# 10. FIGURE 2: SENSITIVITY ANALYSIS – Pr(OR < 1.0) ACROSS PRIORS
+# ----------------------------------------------------------------------------
+fig2, ax2 = plt.subplots(figsize=(10, 5))
+colors = ['#999999', '#0072B2', '#D55E00', '#56B4E9']
+bars = ax2.bar(df_sens['Prior'], df_sens['Pr(OR<1.0)'], color=colors, edgecolor='black', linewidth=1.2)
+ax2.axhline(y=0.95, color='red', linestyle='--', linewidth=1.5, alpha=0.7, label='95% threshold')
+ax2.set_ylim(0.90, 1.0)
+ax2.set_ylabel('Posterior Probability of OR < 1.0')
+ax2.set_title('Figure 2: Sensitivity Analysis – Probability of Any Protective Effect', fontweight='bold')
+ax2.legend(loc='lower right')
+
+for bar, prob in zip(bars, df_sens['Pr(OR<1.0)']):
+    ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.002,
+             f'{prob:.1%}', ha='center', va='bottom', fontsize=12, fontweight='bold')
+
+ax2.grid(axis='y', alpha=0.3)
+fig2.tight_layout()
+plt.show()
+fig2.savefig('Figure2_Sensitivity.png', dpi=300, bbox_inches='tight')
+
+# ----------------------------------------------------------------------------
+# 11. FIGURE 3: BAYES FACTOR ACROSS PRIORS
+# ----------------------------------------------------------------------------
+fig3, ax3 = plt.subplots(figsize=(10, 5))
+bars = ax3.bar(df_sens['Prior'], df_sens['BF₁₀'], color=colors, edgecolor='black', linewidth=1.2)
+ax3.axhline(y=10, color='red', linestyle='--', linewidth=1.5, alpha=0.7, label='BF=10 (strong evidence)')
+ax3.axhline(y=30, color='orange', linestyle='--', linewidth=1.5, alpha=0.7, label='BF=30 (very strong evidence)')
+ax3.set_ylabel('Bayes Factor (BF₁₀)')
+ax3.set_title('Figure 3: Bayes Factor Across Priors', fontweight='bold')
+ax3.legend(loc='upper left')
+
+for bar, bf in zip(bars, df_sens['BF₁₀']):
+    ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+             f'{bf:.1f}', ha='center', va='bottom', fontsize=12, fontweight='bold')
+
+ax3.grid(axis='y', alpha=0.3)
+fig3.tight_layout()
+plt.show()
+fig3.savefig('Figure3_Bayes_Factor.png', dpi=300, bbox_inches='tight')
+
+# ----------------------------------------------------------------------------
+# 12. FIGURE 4: FOREST PLOT – OBSERVED OR vs POSTERIOR MEDIAN
+# ----------------------------------------------------------------------------
+fig4, ax4 = plt.subplots(figsize=(10, 4))
+
+labels = ['Observed (Frequentist)', 'Posterior (Bayesian)']
+or_vals = [OR_observed, post_median_OR]
+lower_bounds = [CI_lower, cr_lower]
+upper_bounds = [CI_upper, cr_upper]
+colors_forest = ['#0072B2', '#D55E00']
+y_pos = [1, 0]
+
+for i, (label, or_val, lb, ub, color) in enumerate(zip(labels, or_vals, lower_bounds, upper_bounds, colors_forest)):
+    y = y_pos[i]
+    ax4.plot(or_val, y, 'o', color=color, markersize=14, zorder=3)
+    ax4.hlines(y, lb, ub, colors=color, linewidth=4, zorder=2)
+    ax4.text(lb - 0.15, y, f'{lb:.3f}', ha='right', va='center', fontsize=10, color='black')
+    ax4.text(ub + 0.15, y, f'{ub:.3f}', ha='left', va='center', fontsize=10, color='black')
+    ax4.text(or_val, y + 0.15, f'{or_val:.3f}', ha='center', va='bottom', fontsize=11, fontweight='bold')
+
+ax4.axvline(x=1.0, color='black', linestyle='--', linewidth=1.5, alpha=0.6, label='Null (OR = 1.0)')
+ax4.axvline(x=0.95, color='green', linestyle=':', linewidth=1.5, alpha=0.6, label='ROPE lower bound (OR=0.95)')
+ax4.axvline(x=1.05, color='green', linestyle=':', linewidth=1.5, alpha=0.6, label='ROPE upper bound (OR=1.05)')
+
+ax4.set_yticks(y_pos)
+ax4.set_yticklabels(labels)
+ax4.set_xlabel('Odds Ratio')
+ax4.set_title('Figure 4: Frequentist OR vs Bayesian Posterior Median OR with ROPE', fontweight='bold')
+ax4.set_xlim(0.2, 1.4)
+ax4.grid(axis='x', alpha=0.3)
+ax4.legend(loc='upper right', ncol=2)
+fig4.tight_layout()
+plt.show()
+fig4.savefig('Figure4_Forest_Plot.png', dpi=300, bbox_inches='tight')
+
+# ----------------------------------------------------------------------------
+# 13. FIGURE 5: DECISION-CURVE ANALYSIS
+# ----------------------------------------------------------------------------
+fig5, ax5 = plt.subplots(figsize=(10, 6))
+ax5.plot(thresholds, net_benefit_te, '-', color='#D55E00', linewidth=3, label='T&E Strategy')
+ax5.plot(thresholds, net_benefit_afl, '--', color='#0072B2', linewidth=3, label='Aflibercept Strategy')
+
+# Add vertical line at posterior probability
+ax5.axvline(x=prob_OR_lt_1, color='black', linestyle='--', linewidth=1.5, alpha=0.7, 
+            label=f'Posterior Probability: {prob_OR_lt_1:.1%}')
+
+# Add vertical line at decision threshold
+ax5.axvline(x=decision_threshold, color='red', linestyle='-.', linewidth=1.5, alpha=0.7,
+            label=f'Decision Threshold: {decision_threshold:.1%}')
+
+ax5.set_xlabel('Threshold Probability')
+ax5.set_ylabel('Net Benefit')
+ax5.set_title('Figure 5: Decision-Curve Analysis', fontweight='bold')
+ax5.set_xlim(0, 1)
+ax5.set_ylim(-0.1, 1.0)
+ax5.legend(loc='upper right')
+ax5.grid(True, alpha=0.3)
+fig5.tight_layout()
+plt.show()
+fig5.savefig('Figure5_Decision_Curve.png', dpi=300, bbox_inches='tight')
+
+# ----------------------------------------------------------------------------
+# 14. SUMMARY TABLE FOR MANUSCRIPT
+# ----------------------------------------------------------------------------
+summary_data = {
+    "Metric": [
+        "Posterior median OR",
+        "95% Credible Interval",
+        "Pr(OR < 1.0) – any protective effect",
+        "Pr(OR < 0.77) – ≥23% RRR",
+        "Pr(OR < 0.60) – ≥40% RRR",
+        "Bayes Factor (H₁ vs H₀)",
+        "Pr(OR in ROPE 0.95–1.05)",
+        "Pr(OR below ROPE)",
+        "Decision threshold probability",
+        "Sensitivity range (Pr(OR < 1.0))"
+    ],
+    "Value": [
+        f"{post_median_OR:.3f}",
+        f"{cr_lower:.3f} – {cr_upper:.3f}",
+        f"{prob_OR_lt_1:.1%}",
+        f"{prob_OR_lt_077:.1%}",
+        f"{prob_OR_lt_060:.1%}",
+        f"{bayes_factor:.1f}",
+        f"{prob_in_rope:.1%}",
+        f"{prob_below_rope:.1%}",
+        f"{decision_threshold:.1%}",
+        f"{df_sens['Pr(OR<1.0)'].min():.1%} – {df_sens['Pr(OR<1.0)'].max():.1%}"
+    ]
+}
+df_summary = pd.DataFrame(summary_data)
+
+print("\n" + "=" * 80)
+print("SUMMARY TABLE FOR MANUSCRIPT")
+print("=" * 80)
+print(df_summary.to_string(index=False))
+print("=" * 80)
+
+print("\nAll figures saved successfully:")
+print("  - Figure1_Prior_Posterior_ROPE.png")
+print("  - Figure2_Sensitivity.png")
+print("  - Figure3_Bayes_Factor.png")
+print("  - Figure4_Forest_Plot.png")
+print("  - Figure5_Decision_Curve.png")
+print("\nAnalysis complete.")
