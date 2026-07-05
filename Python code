@@ -160,8 +160,8 @@ print(df_rope_sens.to_string(index=False, formatters={
     "Pr(below ROPE)": "{:.1%}".format,
     "Pr(above ROPE)": "{:.1%}".format
 }))
-print("\nInterpretation: The probability of a clinically negligible effect remains low")
-print("                (<4%) across all ROPE widths, confirming robustness.")
+print("\nInterpretation: The probability of a clinically negligible effect remains relatively low")
+print("                (3.8-13.7%) across all ROPE widths, confirming robustness.")
 print("=" * 80)
 
 # ----------------------------------------------------------------------------
